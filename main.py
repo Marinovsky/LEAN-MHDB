@@ -13,6 +13,7 @@ class market_hours_database:
     def __init__(self):
         self.mhdb = self.get_mhdb_entries_from_local()
         self.cme_group_futures_info = self.get_cme_group_future_info_from_local()
+        self.ice_futures_info = self.get_ice_future_info_from_cloud()
         self.cme_equities_filename = "cme_equities.xlsx"
         self.cme_interest_rate_filename = "cme_interest_rate.xlsx"
         self.cme_fx_filename = "cme_fx.xlsx"
@@ -37,6 +38,11 @@ class market_hours_database:
 
     def get_cme_group_future_info_from_cloud(self):
         url = "https://www.dropbox.com/scl/fi/09j95smm8ko09aupx66gl/cme-group-futures-info.json?rlkey=43ne4e093vtsqo6o2vnbrvtfh&st=7honpni6&dl=1"
+        df = pd.read_json(url)
+        return df
+
+    def get_ice_future_info_from_cloud(self):
+        url = "https://www.dropbox.com/scl/fi/hbgp1j70jn2c0zsiy7vuf/ice-futures-info.json?rlkey=6yhs8a5nw16urdmyuhtnlb0lv&st=6xbh4im7&dl=1"
         df = pd.read_json(url)
         return df
 
@@ -138,7 +144,36 @@ class market_hours_database:
             date = datetime.strptime(early_close + " " + early_closes[early_close], "%m/%d/%Y %H:%M:%S")
             self.add_early_close_to_mhdb(cme_class, date)
 
-    def add_late_open_to_mhdb(self, cme_class, late_open_date):
+    def add_date_to_dict(self, key, label, date_to_add):
+        timezone = self.mhdb["entries"][key]["exchangeTimeZone"]
+        date = date_to_add.strftime("%#m/%#d/%Y")
+        parsed_hour = date_to_add.astimezone(ZoneInfo(timezone)).strftime("%H:%M:%S")
+        if label not in self.mhdb["entries"][key].keys():
+            self.mhdb["entries"][key][label] = dict()
+        if date not in self.mhdb["entries"][key][label].keys():
+            print(f"Date {date} added it to {key} {label}")
+            self.mhdb["entries"][key][label][date] = parsed_hour
+            self.mhdb["entries"][key][label] = dict(sorted(self.mhdb["entries"][key][label].items(), key=lambda d: datetime.strptime(d[0], '%m/%d/%Y')))
+    
+    def add_date_to_list(self, key, label, date_to_add):
+        date = date_to_add.strftime("%#m/%#d/%Y")
+        if (key in self.mhdb["entries"].keys()) and (label not in self.mhdb["entries"][key].keys()):
+            self.mhdb["entries"][key][label] = list()
+        if (key in self.mhdb["entries"].keys()) and (date not in self.mhdb["entries"][key][label]):
+            print(f"Date {date} added it to {key} {label}")
+            self.mhdb["entries"][key][label].append(date)
+            self.mhdb["entries"][key][label] = sorted(self.mhdb["entries"][key][label], key=lambda d: datetime.strptime(d, '%m/%d/%Y'))
+
+    def add_cme_late_open_to_mhdb(self, cme_class, late_open_date):
+        entry = self.cme_group_futures_info[cme_class]
+        products = entry["cmeKeys"]
+        for product in products.keys():
+            key = self.get_mhdb_key(product, products[product])
+            if key not in self.mhdb["entries"].keys():
+                continue
+            self.add_date_to_dict(key, "lateOpens", late_open_date)
+
+    def add_cme_early_close_to_mhdb(self, cme_class, early_close_date, is_update=False):
         entry = self.cme_group_futures_info[cme_class]
         products = entry["cmeKeys"]
         for product in products.keys():
@@ -146,59 +181,30 @@ class market_hours_database:
             if key not in self.mhdb["entries"].keys():
                 continue
             
-            timezone = self.mhdb["entries"][key]["exchangeTimeZone"]
-            date = late_open_date.strftime("%#m/%#d/%Y")
-            parsed_hour = late_open_date.astimezone(ZoneInfo(timezone)).strftime("%H:%M:%S")
-            if "lateOpens" not in self.mhdb["entries"][key].keys():
-                self.mhdb["entries"][key]["lateOpens"] = dict()
-            if date not in self.mhdb["entries"][key]["lateOpens"].keys():
-                print(f"Date {date} added it to {key} late opens")
-                self.mhdb["entries"][key]["lateOpens"][date] = parsed_hour
-                self.mhdb["entries"][key]["lateOpens"] = dict(sorted(self.mhdb["entries"][key]["lateOpens"].items(), key=lambda d: datetime.strptime(d[0], '%m/%d/%Y')))
+            self.add_date_to_dict(key, "earlyCloses", early_close_date)
 
-    def add_early_close_to_mhdb(self, cme_class, early_close_date, is_update=False):
+    def add_cme_holiday_to_mhdb(self, cme_class, holiday_date):
         entry = self.cme_group_futures_info[cme_class]
         products = entry["cmeKeys"]
         for product in products.keys():
             key = self.get_mhdb_key(product, products[product])
+            self.add_date_to_list(key, "holidays", holiday_date)
+    
+    def add_ice_holiday_to_mhdb(self, ice_class, holiday):
+        entry = self.ice_futures_info[ice_class]
+        for product in entry["keys"]:
+            key = self.get_mhdb_key(product, "ice")
             if key not in self.mhdb["entries"].keys():
                 continue
-            
-            timezone = self.mhdb["entries"][key]["exchangeTimeZone"]
-            date = early_close_date.strftime("%#m/%#d/%Y")
-            parsed_hour = early_close_date.astimezone(ZoneInfo(timezone)).strftime("%H:%M:%S")
-            if "earlyCloses" not in self.mhdb["entries"][key].keys():
-                self.mhdb["entries"][key]["earlyCloses"] = dict()
-            if date not in self.mhdb["entries"][key]["earlyCloses"].keys() or (is_update):
-                print(f"Date {date} added it to {key} early closes")
-                self.mhdb["entries"][key]["earlyCloses"][date] = parsed_hour
-                self.mhdb["entries"][key]["earlyCloses"] = dict(sorted(self.mhdb["entries"][key]["earlyCloses"].items(), key=lambda d: datetime.strptime(d[0], '%m/%d/%Y')))
+            self.add_date_to_list(key, "holidays", holiday)
 
-    def add_holiday_to_mhdb(self, cme_class, holiday_date):
+    def add_cme_bank_holiday_to_mhdb(self, cme_class, holiday_date, exclude):
         entry = self.cme_group_futures_info[cme_class]
         products = entry["cmeKeys"]
         for product in products.keys():
-            date = holiday_date.strftime("%#m/%#d/%Y")
-            key = self.get_mhdb_key(product, products[product])
-            if (key in self.mhdb["entries"].keys()) and (date not in self.mhdb["entries"][key]["holidays"]):
-                print(f"Date {date} added it to {key} holidays")
-                self.mhdb["entries"][key]["holidays"].append(date)
-                self.mhdb["entries"][key]["holidays"] = sorted(self.mhdb["entries"][key]["holidays"], key=lambda d: datetime.strptime(d, '%m/%d/%Y'))
-
-    def add_bank_holiday_to_mhdb(self, cme_class, holiday_date, exclude):
-        entry = self.cme_group_futures_info[cme_class]
-        products = entry["cmeKeys"]
-        for product in products.keys():
-            date = holiday_date.strftime("%#m/%#d/%Y")
             if product in exclude: continue
             key = self.get_mhdb_key(product, products[product])
-            
-            if (key in self.mhdb["entries"].keys()) and ("bankHolidays" not in self.mhdb["entries"][key].keys()):
-                self.mhdb["entries"][key]["bankHolidays"] = list()
-            if (key in self.mhdb["entries"].keys()) and (date not in self.mhdb["entries"][key]["bankHolidays"]):
-                print(f"Date {date} added it to {key} bank holidays")
-                self.mhdb["entries"][key]["bankHolidays"].append(date)
-                self.mhdb["entries"][key]["bankHolidays"] = sorted(self.mhdb["entries"][key]["bankHolidays"], key=lambda d: datetime.strptime(d, '%m/%d/%Y'))
+            self.add_date_to_list(key, "bankHolidays", holiday_date)
     
     def remove_early_close_from_mhdb(self, cme_class, early_close_date):
         entry = self.cme_group_futures_info[cme_class]
@@ -273,29 +279,48 @@ class market_hours_database:
         self.cme_group_futures_info[cme_class]["earlyCloses"][date] = early_close_date.astimezone(
             ZoneInfo(cme_group_futures_info_timezone)).strftime("%H:%M:%S")
 
-    def add_early_closes(self, cme_class, early_closes):
+    def add_cme_early_closes(self, cme_class, early_closes):
         for early_close in early_closes:
-            self.add_early_close_to_mhdb(cme_class, early_close)
+            self.add_cme_early_close_to_mhdb(cme_class, early_close)
             #mhdb.add_early_close_to_cme_group_futures_info(cme_class, early_close)
 
-    def add_late_opens(self, cme_class, late_opens):
+    def add_early_closes(self, key, early_closes):
+        for early_close in early_closes:
+            self.add_date_to_dict(key, "earlyCloses", early_close)
+
+    def add_late_opens(self, key, late_opens):
         for late_open in late_opens:
-            self.add_late_open_to_mhdb(cme_class, late_open)
+            self.add_date_to_dict(key, "lateOpens", late_open)
+
+    def add_holidays(self, key, holidays):
+        for holiday in holidays:
+            self.add_date_to_list(key, "holidays", holiday)
+
+    def add_cme_late_opens(self, cme_class, late_opens):
+        for late_open in late_opens:
+            self.add_cme_late_open_to_mhdb(cme_class, late_open)
             #mhdb.add_late_open_to_cme_group_futures_info(cme_class, late_open)
     
-    def add_holidays(self, cme_class, holidays):
+    def add_cme_holidays(self, cme_class, holidays):
         for holiday in holidays:
-            self.add_holiday_to_mhdb(cme_class, holiday)
+            self.add_cme_holiday_to_mhdb(cme_class, holiday)
 
-    def add_bank_holidays(self, cme_class, bank_holidays, exclude):
+    def add_ice_holidays(self, cme_class, holidays):
+        for holiday in holidays:
+            self.add_ice_holiday_to_mhdb(cme_class, holiday)
+
+    def add_cme_bank_holidays(self, cme_class, bank_holidays, exclude):
         for holiday in bank_holidays:
-            self.add_bank_holiday_to_mhdb(cme_class, holiday, exclude)
+            self.add_cme_bank_holiday_to_mhdb(cme_class, holiday, exclude)
 
-    def add_all(self, cme_class, changes, exclude=[]):
-        self.add_early_closes(cme_class, changes[cme_class]["earlyCloses"])
-        self.add_late_opens(cme_class, changes[cme_class]["lateOpens"])
-        self.add_holidays(cme_class, changes[cme_class]["holidays"])
-        self.add_bank_holidays(cme_class, changes[cme_class]["bankHolidays"], exclude)
+    def apply_cme_changes(self, cme_class, changes, exclude=[]):
+        self.add_cme_early_closes(cme_class, changes["cme"][cme_class]["earlyCloses"])
+        self.add_cme_late_opens(cme_class, changes["cme"][cme_class]["lateOpens"])
+        self.add_cme_holidays(cme_class, changes["cme"][cme_class]["holidays"])
+        self.add_cme_bank_holidays(cme_class, changes["cme"][cme_class]["bankHolidays"], exclude)
+
+    def apply_ice_changes(self, cme_class, changes):
+        self.add_ice_holidays(cme_class, changes["ice"][cme_class]["holidays"])
     
     def remove_early_closes(self, cme_class, early_closes):
         for early_close in early_closes:
@@ -314,10 +339,10 @@ class market_hours_database:
             self.remove_bank_holiday_from_mhdb(cme_class, bank_holiday)
 
     def remove_all(self, cme_class, changes):
-        self.remove_early_closes(cme_class, changes[cme_class]["remove"]["earlyCloses"])
-        self.remove_late_opens(cme_class, changes[cme_class]["remove"]["lateOpens"])
-        self.remove_holidays(cme_class, changes[cme_class]["remove"]["holidays"])
-        self.remove_bank_holidays(cme_class, changes[cme_class]["remove"]["bankHolidays"])
+        self.remove_early_closes(cme_class, changes["cme"][cme_class]["remove"]["earlyCloses"])
+        self.remove_late_opens(cme_class, changes["cme"][cme_class]["remove"]["lateOpens"])
+        self.remove_holidays(cme_class, changes["cme"][cme_class]["remove"]["holidays"])
+        self.remove_bank_holidays(cme_class, changes["cme"][cme_class]["remove"]["bankHolidays"])
 
     def parse_dictionary_of_dates(self, timezone, dates):
         dates_parsed = []
@@ -339,20 +364,34 @@ class market_hours_database:
         with open(path, "r") as f:
             changes = json.load(f)
         changes_df = {}
-        for cme_class in changes.keys():
-            timezone = changes[cme_class]["exchangeTimeZone"]
-            changes_df[cme_class] = {}
+        changes_df["cme"] = {}
+        for cme_class in changes["cme"].keys():
+            timezone = changes["cme"][cme_class]["exchangeTimeZone"]
+            changes_df["cme"][cme_class] = {}
             
-            changes_df[cme_class]["earlyCloses"] = self.parse_dictionary_of_dates(timezone, changes[cme_class]["earlyCloses"])
-            changes_df[cme_class]["lateOpens"] = self.parse_dictionary_of_dates(timezone, changes[cme_class]["lateOpens"])
-            changes_df[cme_class]["holidays"] = [datetime.strptime(f"{date}", "%m/%d/%Y") for date in changes[cme_class]["holidays"]]
-            changes_df[cme_class]["bankHolidays"] = [datetime.strptime(f"{date}", "%m/%d/%Y") for date in changes[cme_class]["bankHolidays"]]
+            changes_df["cme"][cme_class]["earlyCloses"] = self.parse_dictionary_of_dates(timezone, changes["cme"][cme_class]["earlyCloses"])
+            changes_df["cme"][cme_class]["lateOpens"] = self.parse_dictionary_of_dates(timezone, changes["cme"][cme_class]["lateOpens"])
+            changes_df["cme"][cme_class]["holidays"] = [datetime.strptime(f"{date}", "%m/%d/%Y") for date in changes["cme"][cme_class]["holidays"]]
+            changes_df["cme"][cme_class]["bankHolidays"] = [datetime.strptime(f"{date}", "%m/%d/%Y") for date in changes["cme"][cme_class]["bankHolidays"]]
 
-            changes_df[cme_class]["remove"] = {}
-            changes_df[cme_class]["remove"]["earlyCloses"] = [datetime.strptime(f"{date}", "%m/%d/%Y") for date in changes[cme_class]["remove"]["earlyCloses"]]
-            changes_df[cme_class]["remove"]["lateOpens"] = [datetime.strptime(f"{date}", "%m/%d/%Y") for date in changes[cme_class]["remove"]["lateOpens"]]
-            changes_df[cme_class]["remove"]["holidays"] = [datetime.strptime(f"{date}", "%m/%d/%Y") for date in changes[cme_class]["remove"]["holidays"]]
-            changes_df[cme_class]["remove"]["bankHolidays"] = [datetime.strptime(f"{date}", "%m/%d/%Y") for date in changes[cme_class]["remove"]["bankHolidays"]]
+            changes_df["cme"][cme_class]["remove"] = {}
+            changes_df["cme"][cme_class]["remove"]["earlyCloses"] = [datetime.strptime(f"{date}", "%m/%d/%Y") for date in changes["cme"][cme_class]["remove"]["earlyCloses"]]
+            changes_df["cme"][cme_class]["remove"]["lateOpens"] = [datetime.strptime(f"{date}", "%m/%d/%Y") for date in changes["cme"][cme_class]["remove"]["lateOpens"]]
+            changes_df["cme"][cme_class]["remove"]["holidays"] = [datetime.strptime(f"{date}", "%m/%d/%Y") for date in changes["cme"][cme_class]["remove"]["holidays"]]
+            changes_df["cme"][cme_class]["remove"]["bankHolidays"] = [datetime.strptime(f"{date}", "%m/%d/%Y") for date in changes["cme"][cme_class]["remove"]["bankHolidays"]]
+        
+        changes_df["eurex"] = {}
+        changes_df["eurex"]["holidays"] = [datetime.strptime(f"{date}", "%m/%d/%Y") for date in changes["eurex"]["holidays"]]
+
+        changes_df["ice"] = {}
+        for ice_class in changes["ice"].keys():
+            changes_df["ice"][ice_class] = {}
+            changes_df["ice"][ice_class]["holidays"] = [datetime.strptime(f"{date}", "%m/%d/%Y") for date in changes["ice"][ice_class]["holidays"]]
+
+        changes_df["cfe"] = {}
+        changes_df["cfe"]["holidays"] = [datetime.strptime(f"{date}", "%m/%d/%Y") for date in changes["cfe"]["holidays"]]
+        changes_df["cfe"]["earlyCloses"] = self.parse_dictionary_of_dates(timezone, changes["cfe"]["earlyCloses"])
+        
         return changes_df
 
     def save_cme_group_futures_info(self):
@@ -417,11 +456,28 @@ class market_hours_database:
             for cme_class in self.cme_group_futures_info.keys():
                 if cme_code in self.cme_group_futures_info[cme_class]["cmeKeys"].keys() and self.cme_group_futures_info[cme_class]["cmeKeys"][cme_code] == market:
                     is_old_entry = False
-
             
-
             if is_old_entry:
                 print(f"Product {cme_code} is a new entry")
+    
+    def check_intersection_of_holidays(self, entry, label):
+        holidays = [date for date in self.mhdb["entries"][entry]["holidays"]]
+        if label not in self.mhdb["entries"][entry].keys(): return
+
+        try:
+            dates = [date for date in self.mhdb["entries"][entry][label].keys()]
+        except:
+            dates = [date for date in self.mhdb["entries"][entry][label]]
+        intersection = list(set(holidays) & set(dates))
+        if len(intersection) != 0:
+            print(f"The following dates belong to both holidays and {label} of {entry}: {intersection}")
+
+    def check_disjoint_holidays(self):
+        for entry in self.mhdb["entries"]:
+            self.check_intersection_of_holidays(entry, "earlyCloses")
+            self.check_intersection_of_holidays(entry, "lateOpens")
+            self.check_intersection_of_holidays(entry, "bankHolidays")
+            
 
 mhdb = market_hours_database()
 """
@@ -444,45 +500,13 @@ print("NICE")
 #mhdb.save_cme_group_futures_info()
 
 changes = mhdb.read_changes_from_json("changes.json")
-mhdb.add_all("equity", changes)
-mhdb.add_all("interest", changes)
-mhdb.add_all("fx", changes, ["MNH", "CNH", "MIR"]) # Remember to exclude MNH, CNH and MIR keys
-mhdb.add_all("crypto", changes)
-mhdb.add_all("energy", changes)
-mhdb.add_all("metals", changes)
-mhdb.add_all("grains", changes) # Remember to include oilseeds
-mhdb.add_all("dairy", changes)
-mhdb.add_all("livestock", changes)
-mhdb.add_all("lumber", changes)
-mhdb.add_all("softs", changes)
 
-print("Check changes...")
-# Check changes
-mhdb.check_duplicates("equity")
-mhdb.check_duplicates("interest")
-mhdb.check_duplicates("fx")
-mhdb.check_duplicates("crypto")
-mhdb.check_duplicates("energy")
-mhdb.check_duplicates("metals")
-mhdb.check_duplicates("grains")
-mhdb.check_duplicates("dairy")
-mhdb.check_duplicates("livestock")
-mhdb.check_duplicates("lumber")
-mhdb.check_duplicates("softs")
+mhdb.add_holidays("Future-eurex-[*]", changes["eurex"]["holidays"])
+#mhdb.apply_ice_changes("generic", changes) // Apply them manually to keep the order
+mhdb.apply_ice_changes("forex", changes)
+mhdb.apply_ice_changes("agriculture", changes)
+mhdb.apply_ice_changes("energy", changes)
 
-#print("Find new entries")
-#mhdb.find_new_entries()
-
-print("Remove dates")
-mhdb.remove_all("equity", changes)
-mhdb.remove_all("interest", changes)
-mhdb.remove_all("fx", changes) # Remember to exclude MNH, CNH and MIR keys
-mhdb.remove_all("crypto", changes)
-mhdb.remove_all("energy", changes)
-mhdb.remove_all("metals", changes)
-mhdb.remove_all("grains", changes) # Remember to include oilseeds
-mhdb.remove_all("dairy", changes)
-mhdb.remove_all("livestock", changes)
-mhdb.remove_all("lumber", changes)
-mhdb.remove_all("softs", changes)
+#mhdb.add_holidays("Future-cfe-[*]", changes["cfe"]["holidays"]) // Apply them manually to keep the order
+mhdb.add_early_closes("Future-cfe-[*]", changes["cfe"]["earlyCloses"])
 mhdb.save()
