@@ -178,7 +178,7 @@ class market_hours_database:
             print(f"{label} not present in {key} entry")
         if (key in self.mhdb["entries"].keys()) and (date in self.mhdb["entries"][key][label]):
             print(f"Date {date} removed from {key} {label}")
-            self.mhdb["entries"][key][label] = [e for e in self.mhdb["entries"][key][label] if e != date]
+            self.mhdb["entries"][key][label].remove(date)
 
     def add_cme_late_open_to_mhdb(self, cme_class, late_open_date):
         entry = self.cme_group_futures_info[cme_class]
@@ -520,9 +520,10 @@ class market_hours_database:
             self.check_intersection_of_holidays_and_label(entry, "lateOpens")
             self.check_intersection_of_holidays_and_label(entry, "bankHolidays")
     
-    def check_disjoint_holidays_with_parent(self):
+    def check_disjoint_holidays_with_parent(self, market):
         for entry in self.mhdb["entries"]:
             product = entry.split("-")
+            if product[1] != market: continue
             parent = f"{product[0]}-{product[1]}-[*]"
             if (parent != entry) and (parent in self.mhdb["entries"].keys()):
                 product_holidays = [date for date in self.mhdb["entries"][entry]["holidays"]]
@@ -530,7 +531,7 @@ class market_hours_database:
 
                 intersection = list(set(product_holidays) & set(parent_holidays))
                 if len(intersection) != 0:
-                    print(f"The following dates belong to both holidays of {entry} and its genric entry {parent}: {intersection}")
+                    print(f"The following dates belong to both holidays of {entry} and its generic entry {parent}: {intersection}")
                     print(f"Dates removed from {entry} holidays")
                     self.mhdb["entries"][entry]["holidays"] = [date for date in self.mhdb["entries"][entry]["holidays"] if date not in intersection]
 
@@ -540,7 +541,7 @@ class market_hours_database:
 
                     intersection = list(set(product_early_closes) & set(parent_early_closes))
                     if len(intersection) != 0:
-                        print(f"The following dates belong to both early closes of {entry} and its genric entry {parent}: {intersection}")
+                        print(f"The following dates belong to both early closes of {entry} and its generic entry {parent}: {intersection}")
                         print(f"Dates removed from {entry} early Closes")
                         for date in intersection:
                             self.mhdb["entries"][entry]["earlyCloses"].pop(date, None)
@@ -551,7 +552,7 @@ class market_hours_database:
 
                     intersection = list(set(product_late_opens) & set(parent_late_opens))
                     if len(intersection) != 0:
-                        print(f"The following dates belong to both late opens of {entry} and its genric entry {parent}: {intersection}")
+                        print(f"The following dates belong to both late opens of {entry} and its generic entry {parent}: {intersection}")
                         print(f"Dates removed from {entry} late opens")
                         for date in intersection:
                             self.mhdb["entries"][entry]["lateOpens"].pop(date, None)
@@ -562,10 +563,9 @@ class market_hours_database:
 
                     intersection = list(set(product_bank_holidays) & set(parent_bank_holidays))
                     if len(intersection) != 0:
-                        print(f"The following dates belong to both bank holidays of {entry} and its genric entry {parent}: {intersection}")
+                        print(f"The following dates belong to both bank holidays of {entry} and its generic entry {parent}: {intersection}")
                         print(f"Dates removed from {entry} bank holidays")
                         self.mhdb["entries"][entry]["holidays"] = [date for date in self.mhdb["entries"][entry]["holidays"] if date not in intersection]
-                print("\n")
 
 mhdb = market_hours_database()
 """
